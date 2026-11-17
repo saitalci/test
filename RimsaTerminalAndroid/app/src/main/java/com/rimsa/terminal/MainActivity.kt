@@ -8,12 +8,14 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
 
 class MainActivity : ComponentActivity() {
     private lateinit var web: WebView
 
-    // Sayfadaki kamera düğmesi window.Android.scan() çağırır
     inner class Bridge {
+        // Kamera ile barkod okuma
         @JavascriptInterface
         fun scan() {
             runOnUiThread {
@@ -26,6 +28,35 @@ class MainActivity : ComponentActivity() {
                         Toast.makeText(this@MainActivity, "Barkod okunamadı", Toast.LENGTH_SHORT).show()
                     }
             }
+        }
+
+        // Sunucu (API) istekleri: sayfa window.Android.http(...) çağırır, sonuç window.onNativeHttp ile döner
+        @JavascriptInterface
+        fun http(id: String, method: String, url: String, body: String, token: String) {
+            Thread {
+                var status = 0
+                var text = ""
+                try {
+                    val c = URL(url).openConnection() as HttpURLConnection
+                    c.requestMethod = method
+                    c.connectTimeout = 8000
+                    c.readTimeout = 15000
+                    if (token.isNotEmpty()) c.setRequestProperty("Authorization", "Bearer $token")
+                    if (body.isNotEmpty()) {
+                        c.doOutput = true
+                        c.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                        c.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+                    }
+                    status = c.responseCode
+                    val s = if (status in 200..299) c.inputStream else c.errorStream
+                    text = s?.bufferedReader(Charsets.UTF_8)?.readText() ?: ""
+                } catch (e: Exception) {
+                    status = 0
+                    text = e.message ?: ""
+                }
+                val js = "window.onNativeHttp(${JSONObject.quote(id)},$status,${JSONObject.quote(text)})"
+                runOnUiThread { web.evaluateJavascript(js, null) }
+            }.start()
         }
     }
 

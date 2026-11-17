@@ -45,20 +45,34 @@ dialog::backdrop{background:#0008}
 #cv{width:100%;display:block;max-height:62vh;object-fit:cover;background:#000}
 #scan p{margin:0;padding:12px 14px 0;color:var(--mute);font-size:14px}
 #scan .btn{margin:12px 14px 14px;width:calc(100% - 28px)}
+.st{font-size:14px;padding:10px 12px;border-radius:10px;margin:10px 0;background:color-mix(in srgb,var(--stitch) 28%,transparent)}.st.bad{background:color-mix(in srgb,var(--err) 20%,transparent)}.st.good{background:color-mix(in srgb,var(--ok) 22%,transparent)}
 [hidden]{display:none!important}
 </style>
 </head>
 <body>
-<header><h1 id="ttl">Rimsa Denim Terminal</h1><button id="out" hidden>Çıkış</button></header>
+<header><h1 id="ttl">Rimsa Denim Terminal</h1><button id="cfgBtn" type="button">⚙ Ayarlar</button><button id="out" hidden>Çıkış</button></header>
 <main>
 
 <section id="giris" class="card">
+  <div id="durum" class="st" hidden></div>
   <label for="kul">Kullanıcı kodu</label>
-  <select id="kul"><option>AHMET</option><option>MEHMET</option><option>AYSE</option></select>
+  <select id="kul"></select>
   <label for="sif">Şifre</label>
-  <input id="sif" type="password" placeholder="Prototipte herhangi bir şifre">
+  <input id="sif" type="password" placeholder="Şifre" autocomplete="current-password">
   <button class="btn" id="btnGiris">Giriş</button>
-  <p class="hint">Prototip: veriler örnektir, gerçek sunucuya bağlanmaz.</p>
+  <button class="btn alt" id="yenile" type="button">Kullanıcıları yenile</button>
+</section>
+
+<section id="ayar" class="card" hidden>
+  <label for="aIp">Sunucu IP adresi</label>
+  <input id="aIp" inputmode="decimal" autocomplete="off" placeholder="Örn. 192.168.10.20">
+  <label for="aPort">Port</label>
+  <input id="aPort" inputmode="numeric" placeholder="5000">
+  <p class="hint">API sunucusunun adresi. Boş bırakırsanız deneme verileri kullanılır.</p>
+  <button class="btn alt" id="aDene" type="button">Bağlantıyı dene</button>
+  <div id="aSonuc" class="st" hidden></div>
+  <button class="btn" id="aKaydet" type="button">Kaydet</button>
+  <button class="btn alt" id="aGeri" type="button">Geri</button>
 </section>
 
 <section id="menu" class="menu" hidden>
@@ -125,12 +139,17 @@ var $=function(i){return document.getElementById(i)};
 var liste=[],secili=-1,log=[],fis=1000,tt;
 function toast(m,t){var e=$("toast");e.textContent=m;e.className=t||"err";e.style.display="block";clearTimeout(tt);tt=setTimeout(function(){e.style.display="none"},2600)}
 function ask(m){return new Promise(function(r){var d=$("dlg");$("dlgTxt").textContent=m;d.showModal();$("dlgYes").onclick=function(){d.close();r(true)};$("dlgNo").onclick=function(){d.close();r(false)}})}
-var TITLES={giris:"Rimsa Denim Terminal",menu:"Ana menü",depo:"Depolar arası aktarım",raf:"Raf aktarım"};
-function go(s){["giris","menu","depo","raf"].forEach(function(k){$(k).hidden=k!==s});$("ttl").textContent=TITLES[s];$("out").hidden=s==="giris";if(s==="depo")dReset();if(s==="raf")rReset()}
+var TITLES={giris:"Rimsa Denim Terminal",ayar:"Ayarlar",menu:"Ana menü",depo:"Depolar arası aktarım",raf:"Raf aktarım"};
+function go(s){["giris","ayar","menu","depo","raf"].forEach(function(k){$(k).hidden=k!==s});$("ttl").textContent=s==="menu"&&user?"Ana menü: "+user:TITLES[s];$("out").hidden=s==="giris"||s==="ayar";$("cfgBtn").hidden=s!=="giris";if(s==="depo")dReset();if(s==="raf")rReset();if(s==="giris")loadUsers();if(s==="ayar"){var c=cfg();$("aIp").value=c.ip||"";$("aPort").value=c.port||"5000";$("aSonuc").hidden=true}}
 document.querySelectorAll("[data-go]").forEach(function(b){b.onclick=function(){go(b.dataset.go)}});
-$("btnGiris").onclick=function(){if(!$("sif").value){toast("Kullanıcı adı ve şifre hatalı");return}go("menu")};
+$("btnGiris").onclick=function(){
+ var kod=$("kul").value,sif=$("sif").value;
+ if(!kod||!sif){toast("Kullanıcı adı ve şifre hatalı");return}
+ if(!base()){user=kod;go("menu");return}
+ var b=$("btnGiris");b.disabled=true;
+ api("POST","/api/giris",{kod:kod,parola:sif}).then(function(r){token=r.token;user=r.kod;$("sif").value="";go("menu")}).catch(function(e){toast(e.st===401?"Kullanıcı adı ve şifre hatalı":e.msg)}).then(function(){b.disabled=false})};
 $("sif").onkeydown=function(e){if(e.key==="Enter")$("btnGiris").click()};
-$("out").onclick=function(){ask("Programdan çıkmak istiyormusunuz ?").then(function(y){if(y){$("sif").value="";go("giris")}})};
+$("out").onclick=function(){ask("Programdan çıkmak istiyormusunuz ?").then(function(y){if(y){$("sif").value="";token="";user=null;go("giris")}})};
 function chips(el,target,fn){el.innerHTML="";Object.keys(URUN).forEach(function(b){var x=document.createElement("button");x.textContent=b;x.onclick=function(){target.value=b;fn&&fn()};el.appendChild(x)})}
 function opts(sel,arr){sel.innerHTML="";arr.forEach(function(v){var o=document.createElement("option");o.textContent=v;sel.appendChild(o)})}
 
@@ -169,6 +188,31 @@ $("rKaydet").onclick=function(){var b=$("rBar").value.trim().toUpperCase();
  if(!DEPOLAR[d][r]){toast("KAPALI !");return}
  var eski=u.depo+" / "+u.raf;u.depo=d;u.raf=r;
  log.push(b+": "+eski+" → "+d+" / "+r);$("rEski").textContent=d+" / "+r;rDraw();toast("Kayıt başarılı","ok");$("rBar").value="";$("rBar").focus()};
+/* Sunucu bağlantısı ve ayarlar */
+var token="",user=null,pend={},seq=0;
+function cfg(){try{return JSON.parse(localStorage.getItem("rimsaCfg")||"{}")}catch(e){return {}}}
+function base(){var c=cfg();return c.ip?"http://"+c.ip+":"+(c.port||"5000"):""}
+window.onNativeHttp=function(id,st,tx){var p=pend[id];if(p){delete pend[id];p(st,tx)}};
+function api(method,path,body,b0){return new Promise(function(res,rej){
+ var url=(b0!==undefined?b0:base())+path,b=body?JSON.stringify(body):"";
+ function done(st,tx){var j=null;try{j=JSON.parse(tx)}catch(e){}
+  if(st>=200&&st<300)res(j);else rej({st:st,msg:st===0?"Sunucuya bağlanılamadı. Ayarlardaki adresi kontrol edin.":((j&&j.hata)||"Sunucu hatası ("+st+")")})}
+ if(window.Android&&window.Android.http){var id="r"+(++seq);pend[id]=done;window.Android.http(id,method,url,b,token)}
+ else fetch(url,{method:method,headers:{"Content-Type":"application/json"},body:b||undefined}).then(function(r){return r.text().then(function(t){done(r.status,t)})}).catch(function(){done(0,"")})})}
+function durum(m,t){var e=$("durum");e.textContent=m;e.className="st "+(t||"");e.hidden=!m}
+function loadUsers(){
+ if(!base()){opts($("kul"),["AHMET","MEHMET","AYSE"]);durum("Sunucu ayarlanmadı: deneme verileri kullanılıyor. Gerçek giriş için Ayarlar’dan sunucu adresini girin.");return}
+ opts($("kul"),[]);durum("Kullanıcılar yükleniyor…");
+ api("GET","/api/kullanicilar").then(function(l){opts($("kul"),l.map(function(u){return u.kod}));durum(l.length?"":"Aktif kullanıcı bulunamadı","bad")}).catch(function(e){durum(e.msg,"bad")})}
+$("yenile").onclick=loadUsers;
+$("cfgBtn").onclick=function(){go("ayar")};
+$("aGeri").onclick=function(){go("giris")};
+function aOku(){return {ip:$("aIp").value.trim().replace(/^https?:\/\//,"").replace(/\/+$/,""),port:$("aPort").value.trim()||"5000"}}
+$("aKaydet").onclick=function(){try{localStorage.setItem("rimsaCfg",JSON.stringify(aOku()))}catch(e){toast("Ayar kaydedilemedi");return}toast("Ayarlar kaydedildi","ok");go("giris")};
+$("aDene").onclick=function(){var c=aOku(),s=$("aSonuc");s.hidden=false;
+ if(!c.ip){s.className="st bad";s.textContent="Önce IP adresini girin.";return}
+ s.className="st";s.textContent="Bağlanıyor…";
+ api("GET","/api/ping",null,"http://"+c.ip+":"+c.port).then(function(){s.className="st good";s.textContent="Bağlantı başarılı."}).catch(function(e){s.className="st bad";s.textContent=e.msg})};
 /* Kamera ile barkod okuma */
 var scanStream=null,scanTimer=null,scanDone=null;
 function scanStop(){clearInterval(scanTimer);if(scanStream){scanStream.getTracks().forEach(function(t){t.stop()});scanStream=null}$("cv").srcObject=null;if($("scan").open)$("scan").close()}
